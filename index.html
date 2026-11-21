@@ -71,6 +71,12 @@
               <span id="readout" class="readout num"></span>
               <div id="tf" class="tf" role="radiogroup" data-i18n-attr="aria-label:tf.label"></div>
             </div>
+            <div class="compare">
+              <div id="legend" class="legend"></div>
+              <button id="cmp-add" class="cmp-add" type="button" data-i18n="cmp.add" data-i18n-attr="title:cmp.addTitle"></button>
+              <input id="cmp-input" class="cmp-input" list="cmp-options" autocomplete="off" spellcheck="false" hidden data-i18n-attr="placeholder:cmp.placeholder;aria-label:cmp.placeholder" />
+              <datalist id="cmp-options"></datalist>
+            </div>
             <div class="chart-box">
               <canvas id="chart" tabindex="0" role="img" data-i18n-attr="aria-label:chart.canvas"></canvas>
               <div id="chart-msg" class="chart-msg" hidden></div>

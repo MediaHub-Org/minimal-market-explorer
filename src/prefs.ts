@@ -16,6 +16,7 @@ export interface Prefs {
   favorites: string[]; // asset symbols (shared across exchanges), in the user's manual order
   exchange: ExchangeId;
   quote: QuotePref;
+  compare: string[]; // assets overlaid on the chart, besides the selected one
   view: View;
   sort: Sort | null; // null = manual order (favorites) / volume (all)
   selected: string | null;
@@ -48,6 +49,7 @@ const DEFAULTS: Prefs = {
   favorites: DEFAULT_FAVORITES,
   exchange: 'kraken',
   quote: 'EUR',
+  compare: [],
   view: 'fav',
   sort: null,
   selected: 'BTC',
@@ -72,6 +74,8 @@ export function loadPrefs(): Prefs {
   if (p.sort && !SORT_KEYS.includes(p.sort.key)) p.sort = null;
   if (!EXCHANGES.includes(p.exchange)) p.exchange = 'kraken';
   if (p.quote !== 'USD') p.quote = 'EUR';
+  if (!Array.isArray(p.compare)) p.compare = [];
+  p.compare = [...new Set(p.compare.filter((b) => typeof b === 'string'))].slice(0, 10);
   return p;
 }
 

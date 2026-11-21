@@ -1,5 +1,5 @@
 import './style.css';
-import { createChart } from './chart';
+import { createChart, type Hover } from './chart';
 import * as cg from './coingecko';
 import { compact, money, pct, price, trend } from './format';
 import { getLang, locale, setLang, t, translateDom } from './i18n';
@@ -61,6 +61,10 @@ const el = {
   chartMsg: $('chart-msg'),
   chartNote: $('chart-note'),
   stats: $('stats'),
+  legend: $('legend'),
+  cmpAdd: $<HTMLButtonElement>('cmp-add'),
+  cmpInput: $<HTMLInputElement>('cmp-input'),
+  cmpOptions: $('cmp-options'),
   sources: $('sources'),
 };
 
@@ -150,7 +154,10 @@ function paintTicker(base: string) {
   li.querySelector('.price')!.textContent = price(m, tk?.last);
   c.textContent = pct(tk?.changePct);
   c.className = `chg num ${trend(tk?.changePct)}`;
-  li.querySelector('.vol')!.textContent = tk ? compact(tk.quoteVolume, m.quote, true, 1) : '—';
+  // The price column already shows the currency; the volume column stays a short number.
+  const vol = li.querySelector<HTMLElement>('.vol')!;
+  vol.textContent = tk ? compact(tk.quoteVolume, '', false, 1) : '—';
+  vol.title = tk ? compact(tk.quoteVolume, m.quote, true) : '';
 }
 
 function score(m: Market, q: string) {
@@ -356,7 +363,14 @@ function onTicker(id: string, tk: Ticker) {
 function flush() {
   flushFrame = 0;
   for (const base of dirty) paintTicker(base);
-  if (prefs.selected && dirty.has(prefs.selected)) paintDetailTicker(true);
+  if (prefs.selected && dirty.has(prefs.selected)) paintDetailTicker();
+  // Keep each charted series' current candle in step with its live price.
+  let moved = false;
+  shown?.markets.forEach((mk, i) => {
+    const tk = dirty.has(mk.base) ? tickers.get(mk.base) : undefined;
+    if (tk) (chart.updateLast(i, tk.last), (moved = true));
+  });
+  if (moved && !hovering) paintReadout(null);
   dirty.clear();
 }
 
@@ -411,33 +425,133 @@ function buildDateFormats() {
   monthFmt = f({ month: 'short', year: 'numeric' });
 }
 
+/* ---------- Chart & comparison ---------- */
+
+/** Distinct line colors for compared assets (first = the selected asset). Readable on light and dark. */
+const PALETTE = ['#5b5bd6', '#e8772e', '#0f9f9f', '#d1458f', '#8c9a1f', '#3b82f6'];
+const MAX_COMPARE = PALETTE.length - 1;
+
+/** What the chart currently shows: the selected asset first, then the compared ones that have data. */
+let shown: { markets: Market[]; histories: History[] } | null = null;
 let hovering = false;
-const chart = createChart($<HTMLCanvasElement>('chart'), (p) => {
-  hovering = !!p;
-  const m = selectedMarket();
-  if (!m) return;
-  if (p) {
-    el.readout.className = 'readout num';
-    el.readout.textContent = `${price(m, p[1])} · ${hoverFmt[prefs.timeframe].format(p[0])}`;
-  } else paintRangeChange(m);
+const comparing = () => !!shown && shown.markets.length > 1;
+
+const chart = createChart($<HTMLCanvasElement>('chart'), (hv) => {
+  hovering = !!hv;
+  paintReadout(hv);
 });
 
-let shownHistory: History | null = null;
-
-function paintRangeChange(m: Market) {
-  const pts = chart.points;
-  if (pts.length < 2 || !shownHistory) {
+function paintReadout(hv: Hover) {
+  const m = selectedMarket();
+  const s = chart.series;
+  if (!m || !shown || !s.length || s[0].points.length < 2) {
     el.readout.textContent = '';
+    paintLegend(null);
     return;
   }
-  const a = pts[0][1];
-  const b = pts[pts.length - 1][1];
-  const since =
-    shownHistory.partial && prefs.timeframe !== 'ALL'
-      ? t('range.since', { d: dayFmt.format(pts[0][0]) })
-      : t(`range.${prefs.timeframe}` as const);
-  el.readout.className = `readout num ${trend(b - a)}`;
-  el.readout.textContent = `${price(m, b - a, true)} (${pct(((b - a) / a) * 100)}) · ${since}`;
+  const tf = prefs.timeframe;
+  const pts = s[0].points;
+  if (comparing()) {
+    // Values are in the legend chips; the readout only says when.
+    el.readout.className = 'readout num';
+    el.readout.textContent = hv ? hoverFmt[tf].format(hv.t) : t('cmp.range', { r: t(`range.${tf}` as const) });
+  } else if (hv && hv.values[0] !== null) {
+    el.readout.className = 'readout num';
+    el.readout.textContent = `${price(m, hv.values[0])} · ${hoverFmt[tf].format(hv.t)}`;
+  } else {
+    const a = pts[0][1];
+    const b = pts[pts.length - 1][1];
+    const since =
+      shown.histories[0].partial && tf !== 'ALL' ? t('range.since', { d: dayFmt.format(pts[0][0]) }) : t(`range.${tf}` as const);
+    el.readout.className = `readout num ${trend(b - a)}`;
+    el.readout.textContent = `${price(m, b - a, true)} (${pct(((b - a) / a) * 100)}) · ${since}`;
+  }
+  paintLegend(hv);
+}
+
+/** Legend chips (compare mode): color, asset, % change at the cursor (or now), and a remove button. */
+function paintLegend(hv: Hover) {
+  const chips: HTMLElement[] = [];
+  if (shown && comparing()) {
+    shown.markets.forEach((mk, i) => {
+      const pts = chart.series[i]?.points ?? [];
+      const v = hv ? hv.values[i] : pts[pts.length - 1]?.[1];
+      const change = v != null && pts.length ? (v / pts[0][1] - 1) * 100 : undefined;
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.style.setProperty('--c', PALETTE[i]);
+      chip.title = `${mk.name} · ${mk.symbol}${pts.length ? ` · ${t('range.since', { d: dayFmt.format(pts[0][0]) })}` : ''}`;
+      chip.append(
+        Object.assign(document.createElement('i'), { className: 'dot' }),
+        Object.assign(document.createElement('b'), { textContent: mk.base }),
+        Object.assign(document.createElement('span'), { className: `num ${trend(change)}`, textContent: pct(change) }),
+      );
+      if (i > 0) {
+        const x = Object.assign(document.createElement('button'), { type: 'button', className: 'chip-x', textContent: '×' });
+        x.ariaLabel = x.title = t('cmp.remove', { name: mk.name });
+        x.onclick = () => removeCompare(mk.base);
+        chip.append(x);
+      }
+      chips.push(chip);
+    });
+  }
+  el.legend.replaceChildren(...chips);
+}
+
+/** The selected asset plus the compared ones available on this exchange. */
+function chartMarkets(m: Market): Market[] {
+  const others = prefs.compare.filter((b) => b !== m.base).map((b) => markets.get(b));
+  return [m, ...others.filter((x): x is Market => !!x)];
+}
+
+function addCompare(base: string) {
+  const m = selectedMarket();
+  if (!m || base === m.base || prefs.compare.includes(base) || !markets.has(base)) return;
+  if (prefs.compare.filter((b) => b !== m.base && markets.has(b)).length >= MAX_COMPARE) {
+    return toast(t('cmp.limit', { n: MAX_COMPARE + 1 }));
+  }
+  prefs.compare.push(base);
+  save();
+  loadChart(m);
+}
+
+function removeCompare(base: string) {
+  prefs.compare = prefs.compare.filter((b) => b !== base);
+  save();
+  const m = selectedMarket();
+  if (m) loadChart(m);
+}
+
+/** Suggestions for the compare box: every asset on the current exchange. */
+function fillCompareOptions() {
+  el.cmpOptions.replaceChildren(
+    ...[...markets.values()]
+      .sort((a, b) => a.base.localeCompare(b.base))
+      .map((m) => Object.assign(document.createElement('option'), { value: m.base === m.name ? m.base : `${m.base} — ${m.name}` })),
+  );
+}
+
+function openCompare() {
+  el.cmpInput.hidden = false;
+  el.cmpAdd.hidden = true;
+  el.cmpInput.value = '';
+  el.cmpInput.focus();
+}
+
+function closeCompare() {
+  el.cmpInput.hidden = true;
+  el.cmpAdd.hidden = false;
+}
+
+/** Accepts "BTC — Bitcoin" (a suggestion), a ticker or a name, case-insensitively. */
+function submitCompare() {
+  const v = el.cmpInput.value.trim();
+  if (!v) return closeCompare();
+  const key = v.split(' — ')[0].trim().toLowerCase();
+  const m = [...markets.values()].find((x) => x.base.toLowerCase() === key || x.name.toLowerCase() === key);
+  if (m) addCompare(m.base);
+  closeCompare();
+  el.cmpAdd.focus();
 }
 
 function buildTimeframes() {
@@ -496,12 +610,12 @@ function showDetails(m: Market) {
       ? t('pair.titleCrypto', { pair: m.symbol })
       : t('pair.titleToken', { base: m.base, pair: m.symbol, p: provider.name });
   paintStar(m.base);
-  paintDetailTicker(false);
+  paintDetailTicker();
   loadChart(m);
   loadStats(m);
 }
 
-function paintDetailTicker(live: boolean) {
+function paintDetailTicker() {
   const m = selectedMarket();
   if (!m) return;
   const tk = tickers.get(m.base);
@@ -510,12 +624,6 @@ function paintDetailTicker(live: boolean) {
   el.chg.className = `num ${trend(tk?.changePct)}`;
   document.title = tk ? `${price(m, tk.last)} ${m.base} · ${t('app.title')}` : t('app.title');
   paintStats(m);
-
-  // Keep the chart's current candle in step with the live price.
-  if (live && tk && shownHistory && chart.points.length > 1) {
-    chart.updateLast(tk.last);
-    if (!hovering) paintRangeChange(m);
-  }
 }
 
 /* ---------- Statistics ---------- */
@@ -656,28 +764,46 @@ function chartMessage(text: string, retry?: () => void) {
   if (retry) el.chartMsg.append(document.createElement('br'), linkButton(t('msg.retry'), retry));
 }
 
+const histKey = (m: Market, tf: Timeframe) => `${provider.id}|${m.id}|${tf}`;
+function cachedHistory(m: Market, tf: Timeframe): History | undefined {
+  const hit = histCache.get(histKey(m, tf));
+  return hit && Date.now() - hit.at < TTL[tf] ? hit.h : undefined;
+}
+
 function loadChart(m: Market) {
   const tf = prefs.timeframe;
-  const key = `${provider.id}|${m.id}|${tf}`;
+  const list = chartMarkets(m);
   const id = ++chartReq;
   inflight?.abort();
   clearTimeout(debounce);
 
-  const hit = histCache.get(key);
-  if (hit && Date.now() - hit.at < TTL[tf]) return showHistory(m, tf, hit.h);
+  const cached = list.map((mk) => cachedHistory(mk, tf));
+  if (cached.every((h) => h)) return showHistory(list, tf, cached as History[]);
 
-  shownHistory = null;
+  shown = null;
   chart.clear();
-  el.readout.textContent = '';
+  paintReadout(null);
   el.chartNote.textContent = '';
   chartMessage(t('chart.loading'));
   // Short debounce so arrowing through the list doesn't fire a request per row.
   debounce = window.setTimeout(async () => {
     const ctrl = (inflight = new AbortController());
     try {
-      const h = await provider.history(m, tf, ctrl.signal);
-      histCache.set(key, { at: Date.now(), h });
-      if (id === chartReq) showHistory(m, tf, h);
+      // The provider spaces requests out, so several series stay within its rate limit.
+      const hs = await Promise.all(
+        list.map(async (mk, i) => {
+          if (cached[i]) return cached[i]!;
+          try {
+            const h = await provider.history(mk, tf, ctrl.signal);
+            histCache.set(histKey(mk, tf), { at: Date.now(), h });
+            return h;
+          } catch (e) {
+            if (i === 0) throw e; // a compared asset failing just drops its line
+            return null;
+          }
+        }),
+      );
+      if (id === chartReq) showHistory(list, tf, hs);
     } catch (e) {
       if (id !== chartReq || ctrl.signal.aborted) return;
       chartMessage(t('chart.error', { e: e instanceof Error ? e.message : '' }), () => loadChart(m));
@@ -685,31 +811,41 @@ function loadChart(m: Market) {
   }, 150);
 }
 
-function showHistory(m: Market, tf: Timeframe, h: History) {
-  if (h.points.length < 2) {
-    shownHistory = null;
+function showHistory(list: Market[], tf: Timeframe, hs: (History | null)[]) {
+  const m = list[0];
+  const h = hs[0];
+  if (!h || h.points.length < 2) {
+    shown = null;
     chart.clear();
-    el.readout.textContent = '';
+    paintReadout(null);
     el.chartNote.textContent = '';
     chartMessage(t('chart.none', { p: provider.name, pair: m.symbol }));
     return;
   }
   chartMessage('');
-  shownHistory = h;
-  // Copy: live updates mutate the last point.
+  const ok = list.map((mk, i) => ({ mk, h: hs[i] })).filter((x): x is { mk: Market; h: History } => !!x.h && x.h.points.length > 1);
+  const missing = list.filter((_, i) => i > 0 && !(hs[i] && hs[i]!.points.length > 1)).map((mk) => mk.base);
+  shown = { markets: ok.map((x) => x.mk), histories: ok.map((x) => x.h) };
+  const compare = ok.length > 1;
   chart.set(
-    h.points.map((p) => [...p] as [number, number]),
-    (time) => axisFmt[tf].format(time),
+    // Copy: live updates mutate the last point.
+    ok.map((x, i) => ({ points: x.h.points.map((p) => [...p] as [number, number]), color: compare ? PALETTE[i] : undefined })),
+    { mode: compare ? 'compare' : 'price', log: compare && tf === 'ALL', timeLabel: (time) => axisFmt[tf].format(time) },
   );
+
   const d = dayFmt.format(h.points[0][0]);
   const p = provider.name;
-  el.chartNote.textContent =
+  const notes = [
     tf === 'ALL'
       ? t(h.partial ? 'note.allPartial' : 'note.allFull', { p, d })
       : h.partial
         ? t('note.partial', { p, pair: m.symbol, d })
-        : '';
-  paintRangeChange(m);
+        : '',
+    compare ? t(tf === 'ALL' ? 'cmp.noteLog' : 'cmp.note') : '',
+    missing.length ? t('cmp.unavailable', { list: missing.join(', '), p }) : '',
+  ];
+  el.chartNote.textContent = notes.filter(Boolean).join(' ');
+  paintReadout(null);
 }
 
 /* ---------- Events ---------- */
@@ -818,6 +954,14 @@ function bind() {
   }
 
   el.star.addEventListener('click', () => prefs.selected && toggleFavorite(prefs.selected));
+  el.cmpAdd.addEventListener('click', openCompare);
+  el.cmpInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') (e.preventDefault(), submitCompare());
+    else if (e.key === 'Escape') (e.preventDefault(), closeCompare(), el.cmpAdd.focus());
+  });
+  // Picking a suggestion fires `change` (Chrome/Edge) without an Enter key.
+  el.cmpInput.addEventListener('change', () => el.cmpInput.value.includes(' — ') && submitCompare());
+  el.cmpInput.addEventListener('blur', () => setTimeout(() => !el.cmpInput.hidden && document.activeElement !== el.cmpInput && closeCompare(), 150));
   el.theme.addEventListener('click', () => {
     prefs.theme = THEMES[(THEMES.indexOf(prefs.theme) + 1) % THEMES.length];
     save();
@@ -891,6 +1035,7 @@ function paintVenue() {
 /** Show the market list and details for the current pick, keeping the selected asset when possible. */
 function showPicked() {
   if (!markets.size) return;
+  fillCompareOptions();
   if (prefs.view !== 'fav' && prefs.view !== 'crypto' && ![...markets.values()].some((m) => m.type === prefs.view)) prefs.view = 'fav';
   renderList();
   const initial = prefs.selected && markets.has(prefs.selected) ? prefs.selected : order[0] ?? markets.keys().next().value;

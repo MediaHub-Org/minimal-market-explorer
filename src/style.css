@@ -190,7 +190,8 @@ kbd {
 .cols,
 .row {
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) 104px 60px 76px;
+  grid-template-columns: 32px minmax(0, 1fr) 100px 58px 66px;
+  column-gap: 6px;
   align-items: center;
   padding: 0 12px 0 4px;
 }
@@ -618,6 +619,7 @@ kbd {
 }
 .row .vol {
   color: var(--muted);
+  font-size: 12px;
 }
 /* Separates favorites pinned at the top of a list from the rest. */
 .row.pin-end {
@@ -629,4 +631,76 @@ kbd {
 }
 .d-pair a:hover {
   text-decoration: underline;
+}
+/* ---------- Compare ---------- */
+
+.compare {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 28px;
+  margin-top: 10px;
+}
+.legend {
+  display: contents;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 4px 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  font-size: 12px;
+}
+.chip .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--c);
+}
+.chip b {
+  font-weight: 600;
+}
+.chip:not(:has(.chip-x)) {
+  padding-right: 10px;
+}
+.chip-x {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+}
+.chip-x:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+.cmp-add {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px dashed var(--border);
+  border-radius: 13px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.cmp-add:hover {
+  color: var(--fg);
+  border-color: var(--muted);
+}
+.cmp-input {
+  width: 220px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--accent);
+  border-radius: 13px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 12px var(--font);
+  outline: 0;
 }
