@@ -36,12 +36,12 @@ export function pct(v: number | undefined, signed = true): string {
 }
 
 /** Short large numbers: "1.1T €", "52.6B €" ("1,1 B €", "52,6 mil M €" in Spanish). */
-export function compact(v: number | undefined, unit: string, currency = false): string {
+export function compact(v: number | undefined, unit: string, currency = false, digits = 2): string {
   if (v === undefined || !Number.isFinite(v)) return '—';
   if (currency && FIAT.has(unit)) {
-    return nf(`cc${unit}`, { style: 'currency', currency: unit, notation: 'compact', maximumFractionDigits: 2 }).format(v);
+    return nf(`cc${unit}${digits}`, { style: 'currency', currency: unit, notation: 'compact', maximumFractionDigits: digits }).format(v);
   }
-  const n = nf('compact', { notation: 'compact', maximumFractionDigits: 2 }).format(v);
+  const n = nf(`compact${digits}`, { notation: 'compact', maximumFractionDigits: digits }).format(v);
   return unit ? `${n} ${unit}` : n;
 }
 

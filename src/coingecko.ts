@@ -1,17 +1,19 @@
 // Crypto fundamentals that exchanges don't publish (market cap, supply, rank,
-// all-time high, launch date), from CoinGecko's free public API. Values are in EUR.
+// all-time high, launch date), from CoinGecko's free public API.
 // Optional enrichment: on any failure the details page simply shows fewer rows.
 
 const API = 'https://api.coingecko.com/api/v3/';
-const TABLE_KEY = 'mme.cg.table.v1';
 const GENESIS_KEY = 'mme.cg.genesis.v1';
 const TTL = 10 * 60_000;
 const RETRY_AFTER = 60_000;
 
+/** Currency the figures are expressed in. */
+export type Currency = 'eur' | 'usd';
+
 export interface Fundamentals {
   id: string;
   rank: number;
-  price: number; // EUR, used to verify the symbol match
+  price: number; // used to verify the symbol match
   marketCap: number;
   dominance?: number; // % of total crypto market cap
   volume: number; // 24h, all markets
@@ -34,10 +36,14 @@ interface RawCoin {
   ath_date: string | null;
 }
 
-let table: Map<string, Fundamentals> | null = null;
-let tableAt = 0;
-let loading: Promise<void> | null = null;
-let failedAt = 0;
+interface Table {
+  at: number;
+  map: Map<string, Fundamentals>;
+}
+const tables: Partial<Record<Currency, Table>> = {};
+const loading: Partial<Record<Currency, Promise<void>>> = {};
+const failedAt: Partial<Record<Currency, number>> = {};
+const tableKey = (cur: Currency) => `mme.cg.table.${cur}.v1`;
 
 async function json<T>(path: string): Promise<T> {
   const res = await fetch(API + path);
@@ -45,25 +51,22 @@ async function json<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-function readCache() {
+function readCache(cur: Currency) {
   try {
-    const c = JSON.parse(localStorage.getItem(TABLE_KEY) ?? 'null');
-    if (c && Date.now() - c.at < TTL) {
-      table = new Map(c.rows);
-      tableAt = c.at;
-    }
+    const c = JSON.parse(localStorage.getItem(tableKey(cur)) ?? 'null');
+    if (c && Date.now() - c.at < TTL) tables[cur] = { at: c.at, map: new Map(c.rows) };
   } catch {
     /* ignore */
   }
 }
 
-async function fetchTable() {
-  const pages = [await json<RawCoin[]>('coins/markets?vs_currency=eur&order=market_cap_desc&per_page=250&page=1')];
-  pages.push(await json<RawCoin[]>('coins/markets?vs_currency=eur&order=market_cap_desc&per_page=250&page=2'));
+async function fetchTable(cur: Currency) {
+  // One page (top 250) keeps us well under the free API's per-minute limit.
+  const coins = await json<RawCoin[]>(`coins/markets?vs_currency=${cur}&order=market_cap_desc&per_page=250&page=1`);
   const global = await json<{ data: { total_market_cap: Record<string, number> } }>('global').catch(() => null);
-  const total = global?.data.total_market_cap.eur;
+  const total = global?.data.total_market_cap[cur];
   const map = new Map<string, Fundamentals>();
-  for (const c of pages.flat()) {
+  for (const c of coins) {
     const sym = c.symbol.toUpperCase();
     // Symbols aren't unique; the list is sorted by market cap, so the largest wins.
     if (map.has(sym) || !c.market_cap || !c.market_cap_rank || !c.current_price) continue;
@@ -80,34 +83,45 @@ async function fetchTable() {
       athAt: c.ath_date ? Date.parse(c.ath_date) : 0,
     });
   }
-  table = map;
-  tableAt = Date.now();
+  tables[cur] = { at: Date.now(), map };
   try {
-    localStorage.setItem(TABLE_KEY, JSON.stringify({ at: tableAt, rows: [...map] }));
+    localStorage.setItem(tableKey(cur), JSON.stringify({ at: Date.now(), rows: [...map] }));
   } catch {
     /* ignore */
   }
 }
 
-/** Load (or refresh) the top-500 table in the background; resolves when done. */
-export function ensureTable(): Promise<void> {
-  if (!table) readCache();
-  const fresh = table && Date.now() - tableAt < TTL;
-  if (fresh || loading || Date.now() - failedAt < RETRY_AFTER) return loading ?? Promise.resolve();
-  loading = fetchTable()
-    .catch(() => void (failedAt = Date.now()))
-    .finally(() => (loading = null));
-  return loading;
+/** Load (or refresh) the top-250 table for a currency in the background. */
+export function ensureTable(cur: Currency): Promise<void> {
+  if (!tables[cur]) readCache(cur);
+  const t = tables[cur];
+  if ((t && Date.now() - t.at < TTL) || Date.now() - (failedAt[cur] ?? 0) < RETRY_AFTER) return loading[cur] ?? Promise.resolve();
+  return (loading[cur] ??= fetchTable(cur)
+    .catch(() => void (failedAt[cur] = Date.now()))
+    .finally(() => delete loading[cur]));
+}
+
+const USD_LIKE = new Set(['USD', 'USDT', 'USDC']);
+
+/** Value of one unit of `quote` in `cur`, using CoinGecko's own prices (stablecoins as FX proxies). */
+function unitValue(map: Map<string, Fundamentals>, quote: string, cur: Currency): number | undefined {
+  if (quote === cur.toUpperCase() || (cur === 'usd' && USD_LIKE.has(quote))) return 1;
+  if (quote === 'USD') return map.get('USDT')?.price; // USD → EUR via Tether's EUR price
+  if (quote === 'EUR') return map.get('EURC')?.price; // EUR → USD via Euro Coin's USD price
+  return map.get(quote)?.price; // USDT, USDC, BTC, ETH…
 }
 
 /**
- * Fundamentals for an asset symbol, or null. `eurPrice` (the exchange's own price
- * in EUR) guards against a different coin sharing the symbol: the match is only
- * accepted when both prices agree within 10%.
+ * Fundamentals for an asset, or null. The exchange's own price guards against a
+ * different coin sharing the symbol: the match is accepted only when both
+ * prices agree within 10%.
  */
-export function lookup(symbol: string, eurPrice: number | undefined): Fundamentals | null {
-  const f = table?.get(symbol.toUpperCase());
-  if (!f || !eurPrice || Math.abs(f.price / eurPrice - 1) > 0.1) return null;
+export function lookup(symbol: string, price: number | undefined, quote: string, cur: Currency): Fundamentals | null {
+  const map = tables[cur]?.map;
+  const f = map?.get(symbol.toUpperCase());
+  if (!map || !f || !price) return null;
+  const unit = unitValue(map, quote, cur);
+  if (!unit || Math.abs(f.price / (price * unit) - 1) > 0.1) return null;
   return f;
 }
 

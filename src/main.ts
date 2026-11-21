@@ -3,26 +3,33 @@ import { createChart } from './chart';
 import * as cg from './coingecko';
 import { compact, money, pct, price, trend } from './format';
 import { getLang, locale, setLang, t, translateDom } from './i18n';
-import { kraken } from './kraken';
 import { loadPrefs, MAX_FAVORITES, savePrefs, type SortKey, type View } from './prefs';
+import { binance } from './providers/binance';
+import { coinbase } from './providers/coinbase';
+import { quoteRank } from './providers/common';
+import { kraken } from './providers/kraken';
 import {
   TIMEFRAMES,
   type ConnStatus,
+  type ExchangeId,
   type History,
   type Market,
   type Provider,
+  type QuotePref,
   type Ticker,
   type Timeframe,
   type YearStats,
 } from './types';
 
-const provider: Provider = kraken;
+const PROVIDERS: Record<ExchangeId, Provider> = { kraken, binance, coinbase };
 const prefs = loadPrefs();
 const save = () => savePrefs(prefs);
 setLang(prefs.lang);
+let provider = PROVIDERS[prefs.exchange];
 
-const markets = new Map<string, Market>(); // by asset (base)
-const bySymbol = new Map<string, Market>(); // by pair
+let pairs: Market[] = []; // every candidate pair on the current exchange
+const markets = new Map<string, Market>(); // the pair shown for each asset (by base)
+const byId = new Map<string, Market>(); // by the exchange's pair id
 const tickers = new Map<string, Ticker>(); // by asset
 let query = '';
 let order: string[] = []; // assets currently listed, in display order
@@ -43,6 +50,9 @@ const el = {
   name: $('d-name'),
   sym: $('d-sym'),
   pair: $('d-pair'),
+  trade: $<HTMLAnchorElement>('d-trade'),
+  exchange: $('exchange'),
+  quote: $('quote'),
   star: $<HTMLButtonElement>('d-star'),
   last: $('d-last'),
   chg: $('d-chg'),
@@ -82,6 +92,7 @@ function applyLang() {
   el.lang.title = el.lang.ariaLabel = t('lang.label');
   applyTheme();
   paintStatus();
+  paintVenue();
   for (const base of rows.keys()) {
     paintStar(base);
     paintTicker(base);
@@ -106,7 +117,7 @@ function row(m: Market): HTMLLIElement {
   li.id = `row-${m.base.replace(/[^\w-]/g, '_')}`;
   li.setAttribute('role', 'option');
   li.dataset.base = m.base;
-  li.innerHTML = `<button class="star" type="button" tabindex="-1">${STAR}</button><span class="asset"><span class="name"></span><span class="sym"></span></span><span class="price num"></span><span class="chg num"></span>`;
+  li.innerHTML = `<button class="star" type="button" tabindex="-1">${STAR}</button><span class="asset"><span class="name"></span><span class="sym"></span></span><span class="price num"></span><span class="chg num"></span><span class="vol num"></span>`;
   li.querySelector('.name')!.textContent = m.name;
   li.querySelector('.sym')!.textContent = m.base === m.name ? '' : m.base;
   li.title = `${m.name} · ${m.symbol}`;
@@ -139,6 +150,7 @@ function paintTicker(base: string) {
   li.querySelector('.price')!.textContent = price(m, tk?.last);
   c.textContent = pct(tk?.changePct);
   c.className = `chg num ${trend(tk?.changePct)}`;
+  li.querySelector('.vol')!.textContent = tk ? compact(tk.quoteVolume, m.quote, true, 1) : '—';
 }
 
 function score(m: Market, q: string) {
@@ -150,10 +162,9 @@ function score(m: Market, q: string) {
   return 3;
 }
 
-const volume = (base: string) => {
-  const tk = tickers.get(base);
-  return tk ? tk.volume * tk.vwap : -1;
-};
+const volume = (base: string) => tickers.get(base)?.quoteVolume ?? -1;
+
+let pinned = 0; // favorites shown at the top of a non-favorites list
 
 function computeOrder(): Market[] {
   let items: Market[];
@@ -171,7 +182,10 @@ function computeOrder(): Market[] {
   }
   const s = prefs.sort;
   if (s) {
-    const val = (m: Market) => (s.key === 'price' ? tickers.get(m.base)?.last : tickers.get(m.base)?.changePct);
+    const val = (m: Market) => {
+      const tk = tickers.get(m.base);
+      return s.key === 'price' ? tk?.last : s.key === 'change' ? tk?.changePct : tk?.quoteVolume;
+    };
     items.sort((a, b) => {
       if (s.key === 'name') return s.dir * a.name.localeCompare(b.name, locale());
       const va = val(a);
@@ -181,8 +195,19 @@ function computeOrder(): Market[] {
       return s.dir * (va - vb);
     });
   }
+  // Favorites go first in every other list (search results and type tabs), keeping the sort within each group.
+  pinned = 0;
+  if (query || prefs.view !== 'fav') {
+    const favs = items.filter((m) => isFav(m.base));
+    if (favs.length && favs.length < items.length) {
+      items = [...favs, ...items.filter((m) => !isFav(m.base))];
+      pinned = favs.length;
+    }
+  }
   return items;
 }
+
+const visibleFavorites = () => prefs.favorites.filter((b) => markets.has(b)).length;
 
 function renderList({ keepScroll = false } = {}) {
   const scroll = el.list.scrollTop;
@@ -190,20 +215,27 @@ function renderList({ keepScroll = false } = {}) {
   order = items.map((m) => m.base);
   const reorder = canReorder();
   el.list.replaceChildren(...items.map(row));
-  for (const m of items) rows.get(m.base)!.draggable = reorder;
+  items.forEach((m, i) => {
+    const li = rows.get(m.base)!;
+    li.draggable = reorder;
+    li.classList.toggle('pin-end', pinned > 0 && i === pinned - 1);
+  });
   el.list.classList.toggle('reorderable', reorder);
   el.list.scrollTop = keepScroll ? scroll : 0;
 
   // Tabs, sort headers and the footer hint.
   for (const b of document.querySelectorAll<HTMLButtonElement>('.tabs [role=tab]')) {
     b.setAttribute('aria-selected', String(!query && b.dataset.view === prefs.view));
+    // Stocks/ETFs tabs only exist where the exchange lists them (Kraken).
+    const v = b.dataset.view;
+    b.hidden = v !== 'fav' && v !== 'crypto' && ![...markets.values()].some((m) => m.type === v);
   }
   for (const b of document.querySelectorAll<HTMLButtonElement>('.cols [data-sort]')) {
     const on = prefs.sort?.key === b.dataset.sort;
     b.dataset.dir = on ? (prefs.sort!.dir === 1 ? 'asc' : 'desc') : '';
     b.ariaLabel = t('sort.by', { col: b.textContent ?? '' }) + (on ? t(prefs.sort!.dir === 1 ? 'sort.asc' : 'sort.desc') : '');
   }
-  el.favCount.textContent = `${prefs.favorites.length}`;
+  el.favCount.textContent = `${visibleFavorites()}`;
   el.hint.textContent = query
     ? items.length === 1
       ? t('hint.result')
@@ -252,10 +284,10 @@ function markSelected(scroll = true) {
   }
 }
 
-function select(base: string) {
+function select(base: string, force = false) {
   const m = markets.get(base);
   if (!m) return;
-  const changed = prefs.selected !== base || el.body.hidden;
+  const changed = force || prefs.selected !== base || el.body.hidden;
   prefs.selected = base;
   save();
   markSelected();
@@ -285,8 +317,8 @@ function toggleFavorite(base: string) {
   else prefs.favorites.push(base);
   save();
   paintStar(base);
-  if (prefs.view === 'fav' && !query) renderList({ keepScroll: true });
-  else el.favCount.textContent = `${prefs.favorites.length}`;
+  // Re-render so the favorite moves into (or out of) the pinned group.
+  renderList({ keepScroll: true });
 }
 
 function moveFavorite(base: string, target: string, after: boolean) {
@@ -313,8 +345,8 @@ let flushFrame = 0;
 let firstVolumeSort = true;
 let status: ConnStatus = 'connecting';
 
-function onTicker(symbol: string, tk: Ticker) {
-  const m = bySymbol.get(symbol);
+function onTicker(id: string, tk: Ticker) {
+  const m = byId.get(id);
   if (!m) return;
   tickers.set(m.base, tk);
   dirty.add(m.base);
@@ -346,16 +378,6 @@ function onStatus(s: ConnStatus) {
       else if (prefs.sort && prefs.sort.key !== 'name') renderList({ keepScroll: true });
     }, 1500);
   }
-}
-
-/** The asset's price converted to EUR via Kraken's own markets (for CoinGecko matching). */
-function eurPrice(m: Market): number | undefined {
-  const last = tickers.get(m.base)?.last;
-  if (last === undefined) return undefined;
-  if (m.quote === 'EUR') return last;
-  const via = m.quote === 'USD' ? 'USDT' : m.quote; // USD → EUR through the USDT/EUR market
-  const rate = markets.get(via)?.quote === 'EUR' ? tickers.get(via)?.last : undefined;
-  return rate ? last * rate : undefined;
 }
 
 /* ---------- Details ---------- */
@@ -463,8 +485,12 @@ function showDetails(m: Market) {
   el.name.textContent = m.name;
   el.sym.textContent = m.base === m.name ? '' : m.base;
   const kind = m.type === 'crypto' ? '' : `${t(m.type === 'stock' ? 'kind.stock' : 'kind.etf')} · `;
-  const noEur = m.quote === 'EUR' ? '' : ` · ${t('pair.noEur', { q: m.quote })}`;
-  el.pair.textContent = kind + t('pair.on', { pair: m.symbol, p: provider.name }) + noEur;
+  // USD stablecoins count as dollar markets; anything else is a fallback worth pointing out.
+  const sameCurrency = m.quote === prefs.quote || (prefs.quote === 'USD' && (m.quote === 'USDT' || m.quote === 'USDC'));
+  const fallback = sameCurrency ? '' : ` · ${t('pair.fallback', { pref: prefs.quote, q: m.quote })}`;
+  el.pair.textContent = kind + t('pair.on', { pair: m.symbol, p: provider.name }) + fallback;
+  el.trade.href = provider.tradeUrl(m);
+  el.trade.textContent = t('trade.on', { p: provider.name });
   el.pair.title =
     m.type === 'crypto'
       ? t('pair.titleCrypto', { pair: m.symbol })
@@ -507,19 +533,22 @@ function loadStats(m: Market) {
   statsFor = null;
   statsTimer = window.setTimeout(async () => {
     statsFor = m.base;
-    if (m.type === 'crypto') cg.ensureTable().then(() => statsFor === m.base && paintStats(m));
-    const hit = yearCache.get(m.symbol);
+    if (m.type === 'crypto') cg.ensureTable(cgCurrency()).then(() => statsFor === m.base && paintStats(m));
+    const key = `${provider.id}|${m.id}`;
+    const hit = yearCache.get(key);
     if (hit && Date.now() - hit.at < YEAR_TTL) return paintStats(m);
     const ctrl = (statsCtrl = new AbortController());
     try {
-      yearCache.set(m.symbol, { at: Date.now(), y: await provider.yearStats(m, ctrl.signal) });
+      yearCache.set(key, { at: Date.now(), y: await provider.yearStats(m, ctrl.signal) });
     } catch {
       if (ctrl.signal.aborted) return;
-      yearCache.set(m.symbol, { at: Date.now(), y: null });
+      yearCache.set(key, { at: Date.now(), y: null });
     }
     if (statsFor === m.base) paintStats(m);
   }, 600);
 }
+
+const cgCurrency = () => (prefs.quote === 'USD' ? 'usd' : 'eur');
 
 interface Stat {
   label: string;
@@ -530,23 +559,24 @@ interface Stat {
 
 function paintStats(m: Market) {
   const tk = tickers.get(m.base);
-  const y = yearCache.get(m.symbol)?.y ?? null;
-  const f = m.type === 'crypto' ? cg.lookup(m.base, eurPrice(m)) : null;
-  const eur = eurPrice(m);
+  const y = yearCache.get(`${provider.id}|${m.id}`)?.y ?? null;
+  const cur = cgCurrency();
+  const f = m.type === 'crypto' ? cg.lookup(m.base, tk?.last, m.quote, cur) : null;
+  const unit = prefs.quote; // CoinGecko figures are in the chosen currency
   const stats: Stat[] = [];
 
   if (f) {
     stats.push({ label: t('stat.rank'), value: `#${f.rank}` });
     stats.push({
       label: t('stat.mcap'),
-      value: compact(f.marketCap, 'EUR', true),
+      value: compact(f.marketCap, unit, true),
       sub: f.dominance !== undefined ? t('stat.dominance', { v: pct(f.dominance, false) }) : undefined,
     });
     stats.push({
       label: t('stat.volume'),
-      value: compact(f.volume, 'EUR', true),
+      value: compact(f.volume, unit, true),
       sub: tk
-        ? `${t('stat.volumeAll')} · ${t('stat.volumeOn', { v: compact(tk.volume * tk.vwap, m.quote, true), p: provider.name })}`
+        ? `${t('stat.volumeAll')} · ${t('stat.volumeOn', { v: compact(tk.quoteVolume, m.quote, true), p: provider.name })}`
         : t('stat.volumeAll'),
     });
     if (f.circulating) {
@@ -557,11 +587,11 @@ function paintStats(m: Market) {
       });
     }
     if (f.ath) {
-      const from = eur ? (eur / f.ath - 1) * 100 : undefined;
+      const from = (f.price / f.ath - 1) * 100;
       stats.push({
         label: t('stat.ath'),
-        value: money(f.ath, 'EUR'),
-        sub: [f.athAt ? monthFmt.format(f.athAt) : '', from !== undefined ? t('stat.fromHigh', { v: pct(from) }) : '']
+        value: money(f.ath, unit),
+        sub: [f.athAt ? monthFmt.format(f.athAt) : '', t('stat.fromHigh', { v: pct(from) })]
           .filter(Boolean)
           .join(' · '),
       });
@@ -569,7 +599,7 @@ function paintStats(m: Market) {
   } else if (tk) {
     stats.push({
       label: t('stat.volume'),
-      value: compact(tk.volume * tk.vwap, m.quote, true),
+      value: compact(tk.quoteVolume, m.quote, true),
       sub: t('stat.volumeOn', { v: compact(tk.volume, m.base), p: provider.name }),
     });
   }
@@ -628,7 +658,7 @@ function chartMessage(text: string, retry?: () => void) {
 
 function loadChart(m: Market) {
   const tf = prefs.timeframe;
-  const key = `${m.symbol}|${tf}`;
+  const key = `${provider.id}|${m.id}|${tf}`;
   const id = ++chartReq;
   inflight?.abort();
   clearTimeout(debounce);
@@ -801,56 +831,126 @@ function bind() {
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => chart.redraw());
 }
 
-/* ---------- Start ---------- */
+/* ---------- Exchange & quote currency ---------- */
 
-const MARKETS_KEY = 'mme.markets.v3'; // bump when market fields or names change
+const marketsKey = (p: Provider) => `mme.markets.${p.id}.v4`; // bump when market fields or names change
 
-async function getMarkets(): Promise<Market[]> {
+async function getMarkets(p: Provider): Promise<Market[]> {
   try {
-    const c = JSON.parse(localStorage.getItem(MARKETS_KEY) ?? 'null');
-    if (c?.provider === provider.name && Date.now() - c.at < 12 * 3600_000 && c.markets?.length) return c.markets;
+    const c = JSON.parse(localStorage.getItem(marketsKey(p)) ?? 'null');
+    if (Date.now() - c?.at < 12 * 3600_000 && c.markets?.length) return c.markets;
   } catch {
     /* ignore */
   }
-  const list = await provider.loadMarkets();
+  const list = await p.loadMarkets();
   try {
-    localStorage.setItem(MARKETS_KEY, JSON.stringify({ provider: provider.name, at: Date.now(), markets: list }));
+    localStorage.setItem(marketsKey(p), JSON.stringify({ at: Date.now(), markets: list }));
   } catch {
-    /* ignore */
+    /* ignore: storage full, the list is simply re-fetched next time */
   }
   return list;
 }
 
-async function start() {
+/** One pair per asset: the chosen quote currency when that market exists, otherwise the next best. */
+function pickMarkets() {
+  markets.clear();
+  byId.clear();
+  tickers.clear();
+  rows.clear();
+  for (const m of pairs) {
+    const cur = markets.get(m.base);
+    const rank = (q: string) => quoteRank(q, prefs.quote, provider.quoteOrder);
+    if (!cur || rank(m.quote) < rank(cur.quote)) markets.set(m.base, m);
+  }
+  for (const m of markets.values()) byId.set(m.id, m);
+}
+
+let stopStream: (() => void) | null = null;
+let streamGen = 0;
+
+function startStream() {
+  stopStream?.();
+  const gen = ++streamGen; // ignore late callbacks from a stream that was replaced
+  firstVolumeSort = true;
+  el.status.dataset.state = '';
+  stopStream = provider.streamTickers(
+    [...markets.values()].map((m) => m.id),
+    (id, tk) => gen === streamGen && onTicker(id, tk),
+    (s) => gen === streamGen && onStatus(s),
+  );
+}
+
+function paintVenue() {
+  for (const b of el.exchange.querySelectorAll<HTMLButtonElement>('button')) b.setAttribute('aria-checked', String(b.dataset.ex === provider.id));
+  for (const b of el.quote.querySelectorAll<HTMLButtonElement>('button')) {
+    b.setAttribute('aria-checked', String(b.dataset.q === prefs.quote));
+    b.title = t('quote.title', { q: b.dataset.q! });
+  }
+}
+
+/** Show the market list and details for the current pick, keeping the selected asset when possible. */
+function showPicked() {
+  if (!markets.size) return;
+  if (prefs.view !== 'fav' && prefs.view !== 'crypto' && ![...markets.values()].some((m) => m.type === prefs.view)) prefs.view = 'fav';
+  renderList();
+  const initial = prefs.selected && markets.has(prefs.selected) ? prefs.selected : order[0] ?? markets.keys().next().value;
+  if (initial) select(initial, true);
+  startStream();
+}
+
+async function loadExchange() {
+  stopStream?.();
+  stopStream = null;
+  streamGen++;
+  const p = provider;
+  pairs = [];
+  pickMarkets();
+  el.list.replaceChildren();
+  paintVenue();
   setListMessage(t('msg.loadingMarkets'));
-  onStatus('connecting');
-  let list: Market[];
+  status = 'connecting';
+  paintStatus();
   try {
-    list = await getMarkets();
+    const list = await getMarkets(p);
+    if (p !== provider) return; // switched again while loading
+    pairs = list;
   } catch (e) {
+    if (p !== provider) return;
     onStatus('offline');
-    setListMessage(t('msg.marketsError', { p: provider.name, e: e instanceof Error ? e.message : '' }), {
+    setListMessage(t('msg.marketsError', { p: p.name, e: e instanceof Error ? e.message : '' }), {
       label: t('msg.retry'),
-      run: start,
+      run: loadExchange,
     });
     return;
   }
-  for (const m of list) {
-    markets.set(m.base, m);
-    bySymbol.set(m.symbol, m);
-  }
-  // Drop favorites that are no longer listed.
-  prefs.favorites = prefs.favorites.filter((b) => markets.has(b));
-  if (prefs.selected && !markets.has(prefs.selected)) prefs.selected = null;
-  save();
+  pickMarkets();
+  showPicked();
+}
 
-  renderList();
-  const initial = prefs.selected ?? order[0];
-  if (initial) select(initial);
-  provider.streamTickers(list.map((m) => m.symbol), onTicker, onStatus);
+function setExchange(id: ExchangeId) {
+  if (id === provider.id) return;
+  provider = PROVIDERS[id];
+  prefs.exchange = id;
+  save();
+  loadExchange();
+}
+
+function setQuote(q: QuotePref) {
+  if (q === prefs.quote) return;
+  prefs.quote = q;
+  save();
+  paintVenue();
+  pickMarkets();
+  showPicked();
+}
+
+function bindVenue() {
+  for (const b of el.exchange.querySelectorAll<HTMLButtonElement>('button')) b.addEventListener('click', () => setExchange(b.dataset.ex as ExchangeId));
+  for (const b of el.quote.querySelectorAll<HTMLButtonElement>('button')) b.addEventListener('click', () => setQuote(b.dataset.q as QuotePref));
 }
 
 buildTimeframes();
 bind();
+bindVenue();
 applyLang();
-start();
+loadExchange();

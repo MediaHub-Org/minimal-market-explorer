@@ -1,7 +1,9 @@
 import { detectLang, LANGS, type Lang } from './i18n';
-import { TIMEFRAMES, type AssetType, type Timeframe } from './types';
+import { TIMEFRAMES, type AssetType, type ExchangeId, type QuotePref, type Timeframe } from './types';
 
-export type SortKey = 'name' | 'price' | 'change';
+export type SortKey = 'name' | 'price' | 'change' | 'volume';
+const SORT_KEYS: SortKey[] = ['name', 'price', 'change', 'volume'];
+export const EXCHANGES: ExchangeId[] = ['kraken', 'binance', 'coinbase'];
 export interface Sort {
   key: SortKey;
   dir: 1 | -1;
@@ -11,7 +13,9 @@ export type View = 'fav' | AssetType;
 export const VIEWS: View[] = ['fav', 'crypto', 'stock', 'etf'];
 
 export interface Prefs {
-  favorites: string[]; // asset symbols, in the user's manual order
+  favorites: string[]; // asset symbols (shared across exchanges), in the user's manual order
+  exchange: ExchangeId;
+  quote: QuotePref;
   view: View;
   sort: Sort | null; // null = manual order (favorites) / volume (all)
   selected: string | null;
@@ -27,7 +31,7 @@ const KEY = 'mme.prefs.v2';
  * Starter favorites, chosen by size (market capitalization) rather than as
  * recommendations: the largest cryptocurrencies (stablecoins excluded), the
  * largest companies, and broad index, bond and commodity funds.
- * Anything Kraken doesn't list is dropped at startup.
+ * Assets an exchange doesn't list are simply not shown there.
  */
 const DEFAULT_FAVORITES = [
   // 10 cryptocurrencies
@@ -42,6 +46,8 @@ const DEFAULT_FAVORITES = [
 
 const DEFAULTS: Prefs = {
   favorites: DEFAULT_FAVORITES,
+  exchange: 'kraken',
+  quote: 'EUR',
   view: 'fav',
   sort: null,
   selected: 'BTC',
@@ -63,7 +69,9 @@ export function loadPrefs(): Prefs {
   if (!TIMEFRAMES.includes(p.timeframe)) p.timeframe = DEFAULTS.timeframe;
   if (!VIEWS.includes(p.view)) p.view = 'fav';
   if (!LANGS.includes(p.lang)) p.lang = detectLang();
-  if (p.sort && !['name', 'price', 'change'].includes(p.sort.key)) p.sort = null;
+  if (p.sort && !SORT_KEYS.includes(p.sort.key)) p.sort = null;
+  if (!EXCHANGES.includes(p.exchange)) p.exchange = 'kraken';
+  if (p.quote !== 'USD') p.quote = 'EUR';
   return p;
 }
 

@@ -11,6 +11,17 @@
     <div class="app">
       <aside class="explorer">
         <header class="explorer-head">
+          <div class="venue">
+            <div id="exchange" class="seg" role="radiogroup" data-i18n-attr="aria-label:venue.label">
+              <button type="button" role="radio" data-ex="kraken">Kraken</button>
+              <button type="button" role="radio" data-ex="binance">Binance</button>
+              <button type="button" role="radio" data-ex="coinbase">Coinbase</button>
+            </div>
+            <div id="quote" class="seg" role="radiogroup" data-i18n-attr="aria-label:quote.label">
+              <button type="button" role="radio" data-q="EUR">EUR</button>
+              <button type="button" role="radio" data-q="USD">USD</button>
+            </div>
+          </div>
           <div class="search">
             <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5 14 14" /></svg>
             <input id="search" type="search" data-i18n-attr="placeholder:search.placeholder;aria-label:search.placeholder" autocomplete="off" spellcheck="false" />
@@ -28,6 +39,7 @@
           <button data-sort="name" data-i18n="col.name"></button>
           <button data-sort="price" data-i18n="col.price"></button>
           <button data-sort="change" data-i18n="col.change"></button>
+          <button data-sort="volume" class="vol" data-i18n="col.volume" data-i18n-attr="title:col.volume.title"></button>
         </div>
         <ul id="list" class="list" role="listbox" tabindex="0" data-i18n-attr="aria-label:list.label"></ul>
         <p id="list-msg" class="list-msg" hidden></p>
@@ -46,7 +58,7 @@
           <header class="d-head">
             <div>
               <h1 class="d-title"><span id="d-name"></span> <span id="d-sym" class="sym"></span></h1>
-              <p id="d-pair" class="d-pair"></p>
+              <p class="d-pair"><span id="d-pair"></span> · <a id="d-trade" target="_blank" rel="noopener noreferrer"></a></p>
             </div>
             <button id="d-star" class="star big" type="button"></button>
           </header>
