@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Market Explorer</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M1 12 L5 7 L9 9 L15 3' fill='none' stroke='%236366f1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/></svg>" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="explorer" aria-label="Markets">
+        <header class="explorer-head">
+          <div class="search">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5 14 14" /></svg>
+            <input id="search" type="search" placeholder="Search assets" aria-label="Search assets" autocomplete="off" spellcheck="false" />
+            <kbd aria-hidden="true">/</kbd>
+          </div>
+          <div class="tabs" role="tablist" aria-label="List">
+            <button role="tab" id="tab-fav" data-view="fav">Favorites <span id="fav-count" class="count"></span></button>
+            <button role="tab" id="tab-all" data-view="all">All assets</button>
+          </div>
+        </header>
+        <div class="cols">
+          <span></span>
+          <button data-sort="name">Asset</button>
+          <button data-sort="price">Price</button>
+          <button data-sort="change">24h</button>
+        </div>
+        <ul id="list" class="list" role="listbox" tabindex="0" aria-label="Assets. Arrow keys to move, F to toggle favorite, Alt+Arrow to reorder favorites."></ul>
+        <p id="list-msg" class="list-msg" hidden></p>
+        <footer class="explorer-foot">
+          <span id="hint" class="hint"></span>
+          <span id="status" class="status" role="status"></span>
+          <button id="theme" class="icon-btn" type="button"></button>
+        </footer>
+        <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+      </aside>
+
+      <main class="details" aria-live="off">
+        <p id="d-empty" class="d-empty">Select an asset to see its details.</p>
+        <article id="d-body" hidden>
+          <header class="d-head">
+            <div>
+              <h1 class="d-title"><span id="d-name"></span> <span id="d-sym" class="sym"></span></h1>
+              <p id="d-pair" class="d-pair"></p>
+            </div>
+            <button id="d-star" class="star big" type="button"></button>
+          </header>
+          <div class="d-price">
+            <span id="d-last" class="num"></span>
+            <span id="d-chg" class="num"></span>
+          </div>
+          <section class="chart" aria-label="Price history">
+            <div class="chart-bar">
+              <span id="readout" class="readout num"></span>
+              <div id="tf" class="tf" role="radiogroup" aria-label="Timeframe"></div>
+            </div>
+            <div class="chart-box">
+              <canvas id="chart" tabindex="0" role="img" aria-label="Price chart. Use arrow keys to inspect values."></canvas>
+              <div id="chart-msg" class="chart-msg" hidden></div>
+            </div>
+            <p id="chart-note" class="chart-note"></p>
+          </section>
+          <dl id="stats" class="stats"></dl>
+        </article>
+      </main>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
