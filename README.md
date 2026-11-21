@@ -10,6 +10,8 @@ npm run build    # writes dist/index.html
 
 The build is a single self-contained file: JS and CSS are inlined into `dist/index.html`. You can open it straight from disk (`file:///…/dist/index.html`) with no server. Every API it uses accepts requests from `file://` pages. `dist/` is not committed, so run `npm run build` after pulling changes.
 
+**Online:** every push to `main` builds the app and publishes `dist/` to GitHub Pages ([.github/workflows/pages.yml](.github/workflows/pages.yml)): https://mediahub-org.github.io/minimal-market-explorer/
+
 ## Using it
 
 - **Exchange:** pick Kraken, Binance or Coinbase at the top of the sidebar. The whole app (list, live prices, charts) uses that one exchange. Its name is shown on every detail page, with a "Trade on …" link. Prices are never compared across exchanges.
