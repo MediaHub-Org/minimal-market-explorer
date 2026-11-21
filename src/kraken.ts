@@ -1,4 +1,4 @@
-import { NAMES } from './names';
+import { ETFS, NAMES } from './names';
 import type { ConnStatus, History, Market, Provider, Ticker, Timeframe } from './types';
 
 const REST = 'https://api.kraken.com/0/public/';
@@ -55,21 +55,30 @@ interface RawPair {
 }
 
 async function loadMarkets(): Promise<Market[]> {
-  const pairs = await get<Record<string, RawPair>>('AssetPairs');
+  // Crypto is the default asset class; tokenized stocks and ETFs (xStocks) must be asked for.
+  const crypto = await get<Record<string, RawPair>>('AssetPairs');
+  const tokenized = await get<Record<string, RawPair>>('AssetPairs?aclass_base=tokenized_asset');
   const best = new Map<string, { m: Market; rank: number }>();
-  for (const p of Object.values(pairs)) {
-    if (p.status !== 'online' || !p.wsname) continue;
-    const [base, quote] = p.wsname.split('/').map((s) => RENAME[s] ?? s);
-    if (!base || !quote || FIAT.has(base)) continue;
-    const r = QUOTES.indexOf(quote);
-    const rank = r < 0 ? QUOTES.length : r;
-    const cur = best.get(base);
-    if (cur && cur.rank <= rank) continue;
-    best.set(base, {
-      rank,
-      m: { symbol: `${base}/${quote}`, base, quote, name: NAMES[base] ?? base, decimals: p.pair_decimals },
-    });
-  }
+  const add = (pairs: Record<string, RawPair>, tokenizedClass: boolean) => {
+    for (const p of Object.values(pairs)) {
+      // post_only xStocks still quote real prices; they just limit order types.
+      const listed = p.status === 'online' || (tokenizedClass && p.status === 'post_only');
+      if (!listed || !p.wsname) continue;
+      const [base, quote] = p.wsname.split('/').map((s) => RENAME[s] ?? s);
+      if (!base || !quote || FIAT.has(base)) continue;
+      const r = QUOTES.indexOf(quote);
+      const rank = r < 0 ? QUOTES.length : r;
+      const cur = best.get(base);
+      if (cur && cur.rank <= rank) continue;
+      const type = !tokenizedClass ? 'crypto' : ETFS.has(base) ? 'etf' : 'stock';
+      best.set(base, {
+        rank,
+        m: { type, symbol: `${base}/${quote}`, base, quote, name: NAMES[base] ?? base, decimals: p.pair_decimals },
+      });
+    }
+  };
+  add(crypto, false);
+  add(tokenized, true);
   return [...best.values()].map((b) => b.m);
 }
 
@@ -143,10 +152,11 @@ function streamTickers(
 
 type Candle = [number, string, string, string, string, ...unknown[]];
 
-async function history(symbol: string, tf: Timeframe, signal?: AbortSignal): Promise<History> {
+async function history(m: Market, tf: Timeframe, signal?: AbortSignal): Promise<History> {
   const { interval, span } = TF[tf];
+  const assetClass = m.type === 'crypto' ? '' : '&asset_class=tokenized_asset';
   const res = await get<Record<string, Candle[] | number>>(
-    `OHLC?pair=${encodeURIComponent(symbol)}&interval=${interval}`,
+    `OHLC?pair=${encodeURIComponent(m.symbol)}&interval=${interval}${assetClass}`,
     signal,
   );
   const rows = Object.entries(res).find(([k]) => k !== 'last')?.[1];

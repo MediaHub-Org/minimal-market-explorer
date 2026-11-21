@@ -2,7 +2,7 @@ import './style.css';
 import { createChart } from './chart';
 import { compact, pct, price, trend } from './format';
 import { kraken } from './kraken';
-import { loadPrefs, MAX_FAVORITES, savePrefs, type SortKey } from './prefs';
+import { loadPrefs, MAX_FAVORITES, savePrefs, type SortKey, type View } from './prefs';
 import { TIMEFRAMES, type ConnStatus, type History, type Market, type Provider, type Ticker, type Timeframe } from './types';
 
 const provider: Provider = kraken;
@@ -133,7 +133,9 @@ function computeOrder(): Market[] {
   } else if (prefs.view === 'fav') {
     items = prefs.favorites.map((b) => markets.get(b)).filter((m): m is Market => !!m);
   } else {
-    items = [...markets.values()].sort((a, b) => volume(b.base) - volume(a.base) || a.name.localeCompare(b.name));
+    items = [...markets.values()]
+      .filter((m) => m.type === prefs.view)
+      .sort((a, b) => volume(b.base) - volume(a.base) || a.name.localeCompare(b.name));
   }
   const s = prefs.sort;
   if (s) {
@@ -184,7 +186,7 @@ function renderList({ keepScroll = false } = {}) {
     : query && !items.length
       ? `No assets match “${query}”.`
       : prefs.view === 'fav' && !query && !items.length
-        ? 'No favorites yet. Star assets in “All assets” to keep them here.'
+        ? 'No favorites yet. Star assets in the other tabs to keep them here.'
         : '';
   setListMessage(msg);
   markSelected(false);
@@ -301,11 +303,11 @@ function onStatus(s: ConnStatus) {
   el.status.dataset.state = s;
   el.status.textContent = STATUS[s];
   el.status.title = s === 'live' ? `Live prices from ${provider.name}` : `Live prices from ${provider.name} are not updating`;
-  // "All assets" defaults to volume order, which needs the first snapshot.
+  // Type tabs default to volume order, which needs the first snapshot.
   if (s === 'live' && firstVolumeSort) {
     firstVolumeSort = false;
     setTimeout(() => {
-      if (prefs.view === 'all' && !query && !prefs.sort) renderList({ keepScroll: true });
+      if (prefs.view !== 'fav' && !query && !prefs.sort) renderList({ keepScroll: true });
       else if (prefs.sort && prefs.sort.key !== 'name') renderList({ keepScroll: true });
     }, 1500);
   }
@@ -403,8 +405,12 @@ function showDetails(m: Market) {
   el.body.hidden = false;
   el.name.textContent = m.name;
   el.sym.textContent = m.base === m.name ? '' : m.base;
-  el.pair.textContent = `${m.symbol} on ${provider.name}${m.quote === 'EUR' ? '' : ` · no EUR market, priced in ${m.quote}`}`;
-  el.pair.title = `Prices shown are for the ${m.symbol} market pair`;
+  const kind = { crypto: '', stock: 'Tokenized stock · ', etf: 'Tokenized ETF · ' }[m.type];
+  el.pair.textContent = `${kind}${m.symbol} on ${provider.name}${m.quote === 'EUR' ? '' : ` · no EUR market, priced in ${m.quote}`}`;
+  el.pair.title =
+    m.type === 'crypto'
+      ? `Prices shown are for the ${m.symbol} market pair`
+      : `${m.base} is a token (xStock) that tracks the underlying security; it is not the share itself. Prices are for the ${m.symbol} market on ${provider.name}.`;
   paintStar(m.base);
   paintDetailTicker(false);
   loadChart(m);
@@ -482,7 +488,7 @@ function loadChart(m: Market) {
   debounce = window.setTimeout(async () => {
     const ctrl = (inflight = new AbortController());
     try {
-      const h = await provider.history(m.symbol, tf, ctrl.signal);
+      const h = await provider.history(m, tf, ctrl.signal);
       histCache.set(key, { at: Date.now(), h });
       if (id === chartReq) showHistory(m, tf, h);
     } catch (e) {
@@ -614,7 +620,7 @@ function bind() {
 
   for (const b of document.querySelectorAll<HTMLButtonElement>('.tabs [role=tab]')) {
     b.addEventListener('click', () => {
-      prefs.view = b.dataset.view as 'fav' | 'all';
+      prefs.view = b.dataset.view as View;
       save();
       if (query) el.search.value = query = '';
       renderList();
@@ -636,7 +642,7 @@ function bind() {
 
 /* ---------- Start ---------- */
 
-const MARKETS_KEY = 'mme.markets.v1';
+const MARKETS_KEY = 'mme.markets.v3'; // bump when market fields or names change
 
 async function getMarkets(): Promise<Market[]> {
   try {

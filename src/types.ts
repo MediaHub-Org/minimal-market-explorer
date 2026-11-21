@@ -1,7 +1,10 @@
+export type AssetType = 'crypto' | 'stock' | 'etf';
+
 /** A tradable market pair, e.g. BTC/EUR. One per underlying asset. */
 export interface Market {
+  type: AssetType;
   symbol: string; // market pair, "BTC/EUR"
-  base: string; // underlying asset, "BTC"
+  base: string; // traded asset, "BTC" (or "AAPLx" for a tokenized stock)
   quote: string; // quote currency, "EUR"
   name: string; // human name, "Bitcoin" (falls back to the symbol)
   decimals: number; // price precision of the pair
@@ -38,5 +41,5 @@ export interface Provider {
     onTicker: (symbol: string, t: Ticker) => void,
     onStatus: (s: ConnStatus) => void,
   ): void;
-  history(symbol: string, tf: Timeframe, signal?: AbortSignal): Promise<History>;
+  history(market: Market, tf: Timeframe, signal?: AbortSignal): Promise<History>;
 }
