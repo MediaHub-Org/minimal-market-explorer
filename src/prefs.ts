@@ -1,3 +1,4 @@
+import { detectLang, LANGS, type Lang } from './i18n';
 import { TIMEFRAMES, type AssetType, type Timeframe } from './types';
 
 export type SortKey = 'name' | 'price' | 'change';
@@ -16,6 +17,7 @@ export interface Prefs {
   selected: string | null;
   timeframe: Timeframe;
   theme: 'system' | 'light' | 'dark';
+  lang: Lang;
 }
 
 export const MAX_FAVORITES = 50;
@@ -45,6 +47,7 @@ const DEFAULTS: Prefs = {
   selected: 'BTC',
   timeframe: '1M',
   theme: 'system',
+  lang: detectLang(),
 };
 
 export function loadPrefs(): Prefs {
@@ -59,6 +62,7 @@ export function loadPrefs(): Prefs {
   p.favorites = [...new Set(p.favorites.filter((f) => typeof f === 'string'))].slice(0, MAX_FAVORITES);
   if (!TIMEFRAMES.includes(p.timeframe)) p.timeframe = DEFAULTS.timeframe;
   if (!VIEWS.includes(p.view)) p.view = 'fav';
+  if (!LANGS.includes(p.lang)) p.lang = detectLang();
   if (p.sort && !['name', 'price', 'change'].includes(p.sort.key)) p.sort = null;
   return p;
 }

@@ -527,12 +527,20 @@ kbd {
   font-size: 12px;
 }
 
+.stats-wrap {
+  margin-top: 24px;
+}
+.stats-title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
 .stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 1px;
-  margin: 20px 0 0;
-  background: var(--border);
+  margin: 0;
+  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
@@ -540,6 +548,7 @@ kbd {
 .stats div {
   padding: 10px 14px;
   background: var(--bg);
+  box-shadow: 0 0 0 1px var(--border); /* draws the 1px grid lines; empty cells stay blank */
 }
 .stats dt {
   color: var(--muted);
@@ -551,6 +560,24 @@ kbd {
   margin: 2px 0 0;
   font-variant-numeric: tabular-nums;
   font-weight: 500;
+}
+.stats dd.sub {
+  margin-top: 1px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+.sources {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.lang-btn {
+  width: auto;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
 /* ---------- Narrow screens ---------- */

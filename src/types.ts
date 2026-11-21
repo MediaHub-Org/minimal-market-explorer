@@ -30,6 +30,18 @@ export interface History {
   partial: boolean;
 }
 
+/** Derived from the provider's daily candles (about two years of them). */
+export interface YearStats {
+  low: number; // lowest price over the past year
+  high: number;
+  /** First daily candle when the provider has less than a year of data. */
+  partialSince?: number;
+  /** Set only when the provider's whole history fits in the request. */
+  firstAt?: number; // first candle = "on the exchange since"
+  allHigh?: number;
+  allHighAt?: number;
+}
+
 export type ConnStatus = 'connecting' | 'live' | 'reconnecting' | 'offline';
 
 /** The whole surface a market-data provider has to implement. */
@@ -42,4 +54,5 @@ export interface Provider {
     onStatus: (s: ConnStatus) => void,
   ): void;
   history(market: Market, tf: Timeframe, signal?: AbortSignal): Promise<History>;
+  yearStats(market: Market, signal?: AbortSignal): Promise<YearStats>;
 }

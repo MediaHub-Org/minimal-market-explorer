@@ -9,38 +9,39 @@
   </head>
   <body>
     <div class="app">
-      <aside class="explorer" aria-label="Markets">
+      <aside class="explorer">
         <header class="explorer-head">
           <div class="search">
             <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5 14 14" /></svg>
-            <input id="search" type="search" placeholder="Search assets" aria-label="Search assets" autocomplete="off" spellcheck="false" />
+            <input id="search" type="search" data-i18n-attr="placeholder:search.placeholder;aria-label:search.placeholder" autocomplete="off" spellcheck="false" />
             <kbd aria-hidden="true">/</kbd>
           </div>
-          <div class="tabs" role="tablist" aria-label="List">
-            <button role="tab" id="tab-fav" data-view="fav">Favorites <span id="fav-count" class="count"></span></button>
-            <button role="tab" data-view="crypto">Crypto</button>
-            <button role="tab" data-view="stock">Stocks</button>
-            <button role="tab" data-view="etf" title="Exchange-traded funds and products">ETFs</button>
+          <div class="tabs" role="tablist" data-i18n-attr="aria-label:tabs.label">
+            <button role="tab" data-view="fav"><span data-i18n="tab.fav"></span> <span id="fav-count" class="count"></span></button>
+            <button role="tab" data-view="crypto" data-i18n="tab.crypto"></button>
+            <button role="tab" data-view="stock" data-i18n="tab.stock"></button>
+            <button role="tab" data-view="etf" data-i18n="tab.etf" data-i18n-attr="title:tab.etf.title"></button>
           </div>
         </header>
         <div class="cols">
           <span></span>
-          <button data-sort="name">Asset</button>
-          <button data-sort="price">Price</button>
-          <button data-sort="change">24h</button>
+          <button data-sort="name" data-i18n="col.name"></button>
+          <button data-sort="price" data-i18n="col.price"></button>
+          <button data-sort="change" data-i18n="col.change"></button>
         </div>
-        <ul id="list" class="list" role="listbox" tabindex="0" aria-label="Assets. Arrow keys to move, F to toggle favorite, Alt+Arrow to reorder favorites."></ul>
+        <ul id="list" class="list" role="listbox" tabindex="0" data-i18n-attr="aria-label:list.label"></ul>
         <p id="list-msg" class="list-msg" hidden></p>
         <footer class="explorer-foot">
           <span id="hint" class="hint"></span>
           <span id="status" class="status" role="status"></span>
+          <button id="lang" class="icon-btn lang-btn" type="button"></button>
           <button id="theme" class="icon-btn" type="button"></button>
         </footer>
         <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
       </aside>
 
-      <main class="details" aria-live="off">
-        <p id="d-empty" class="d-empty">Select an asset to see its details.</p>
+      <main class="details">
+        <p id="d-empty" class="d-empty" data-i18n="d.empty"></p>
         <article id="d-body" hidden>
           <header class="d-head">
             <div>
@@ -53,18 +54,22 @@
             <span id="d-last" class="num"></span>
             <span id="d-chg" class="num"></span>
           </div>
-          <section class="chart" aria-label="Price history">
+          <section class="chart" data-i18n-attr="aria-label:chart.label">
             <div class="chart-bar">
               <span id="readout" class="readout num"></span>
-              <div id="tf" class="tf" role="radiogroup" aria-label="Timeframe"></div>
+              <div id="tf" class="tf" role="radiogroup" data-i18n-attr="aria-label:tf.label"></div>
             </div>
             <div class="chart-box">
-              <canvas id="chart" tabindex="0" role="img" aria-label="Price chart. Use arrow keys to inspect values."></canvas>
+              <canvas id="chart" tabindex="0" role="img" data-i18n-attr="aria-label:chart.canvas"></canvas>
               <div id="chart-msg" class="chart-msg" hidden></div>
             </div>
             <p id="chart-note" class="chart-note"></p>
           </section>
-          <dl id="stats" class="stats"></dl>
+          <section class="stats-wrap">
+            <h2 class="stats-title" data-i18n="stats.title"></h2>
+            <dl id="stats" class="stats"></dl>
+            <p id="sources" class="sources"></p>
+          </section>
         </article>
       </main>
     </div>

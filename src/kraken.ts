@@ -1,5 +1,5 @@
 import { ETFS, NAMES } from './names';
-import type { ConnStatus, History, Market, Provider, Ticker, Timeframe } from './types';
+import type { ConnStatus, History, Market, Provider, Ticker, Timeframe, YearStats } from './types';
 
 const REST = 'https://api.kraken.com/0/public/';
 const WS = 'wss://ws.kraken.com/v2';
@@ -150,17 +150,24 @@ function streamTickers(
   open();
 }
 
+/** [time (s), open, high, low, close, ...] */
 type Candle = [number, string, string, string, string, ...unknown[]];
 
-async function history(m: Market, tf: Timeframe, signal?: AbortSignal): Promise<History> {
-  const { interval, span } = TF[tf];
+/** Up to the latest 720 candles. Tokenized assets need their asset class in the request. */
+async function ohlc(m: Market, interval: number, signal?: AbortSignal): Promise<Candle[]> {
   const assetClass = m.type === 'crypto' ? '' : '&asset_class=tokenized_asset';
   const res = await get<Record<string, Candle[] | number>>(
     `OHLC?pair=${encodeURIComponent(m.symbol)}&interval=${interval}${assetClass}`,
     signal,
   );
   const rows = Object.entries(res).find(([k]) => k !== 'last')?.[1];
-  if (!Array.isArray(rows)) return { points: [], partial: true };
+  return Array.isArray(rows) ? rows : [];
+}
+
+async function history(m: Market, tf: Timeframe, signal?: AbortSignal): Promise<History> {
+  const { interval, span } = TF[tf];
+  const rows = await ohlc(m, interval, signal);
+  if (!rows.length) return { points: [], partial: true };
   const now = Date.now();
   const from = now - span;
   const candles = rows.filter((r) => r[0] * 1000 >= from && Number.isFinite(Number(r[4])));
@@ -178,4 +185,26 @@ async function history(m: Market, tf: Timeframe, signal?: AbortSignal): Promise<
   return { points, partial };
 }
 
-export const kraken: Provider = { name: 'Kraken', loadMarkets, streamTickers, history };
+async function yearStats(m: Market, signal?: AbortSignal): Promise<YearStats> {
+  const rows = (await ohlc(m, 1440, signal)).filter((r) => Number.isFinite(Number(r[2])) && Number.isFinite(Number(r[3])));
+  if (!rows.length) throw new Error('No daily data');
+  const from = Date.now() - 365 * DAY;
+  const year = rows.filter((r) => r[0] * 1000 >= from);
+  const range = year.length ? year : rows.slice(-1);
+  const s: YearStats = {
+    low: Math.min(...range.map((r) => Number(r[3]))),
+    high: Math.max(...range.map((r) => Number(r[2]))),
+  };
+  const first = rows[0][0] * 1000;
+  if (first > from + 2 * DAY) s.partialSince = first;
+  // Fewer than 720 daily candles means this is the market's entire history on Kraken.
+  if (rows.length < 720) {
+    const top = rows.reduce((a, b) => (Number(b[2]) > Number(a[2]) ? b : a));
+    s.firstAt = first;
+    s.allHigh = Number(top[2]);
+    s.allHighAt = top[0] * 1000;
+  }
+  return s;
+}
+
+export const kraken: Provider = { name: 'Kraken', loadMarkets, streamTickers, history, yearStats };
